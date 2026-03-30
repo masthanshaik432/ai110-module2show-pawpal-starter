@@ -71,4 +71,4 @@ Overall, the system is in a solid place. The main behavior is well tested and re
 
 ## Screenshot
 
-![PawPal App](image.png)
+<a href="image.png" target="_blank"><img src='image.png' title='PawPal App' width='' alt='PawPal App' class='center-block' /></a>.
