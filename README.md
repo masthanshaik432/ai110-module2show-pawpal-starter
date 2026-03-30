@@ -67,3 +67,8 @@ The final section checks conflict detection. It makes sure overlapping tasks are
 
 Confidence Level: 4/5
 Overall, the system is in a solid place. The main behavior is well tested and reliable. The biggest limitation is the scheduling approach. It is simple and predictable, but it does not always produce the most efficient plan when the schedule gets more complex.
+
+
+## Screenshot
+
+![PawPal App](image.png)

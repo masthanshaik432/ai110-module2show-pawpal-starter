@@ -142,6 +142,12 @@ Before, it could easily get out of sync depending on how tasks were added. Now i
 - What constraints does your scheduler consider (for example: time, priority, preferences)?
 - How did you decide which constraints mattered most?
 
+Pet health constraints block tasks based on the pet’s condition. For example, heart_disease and arthritis prevent walks, and post_surgery prevents walks and grooming. These rules are in _HEALTH_RESTRICTIONS and are the highest priority for safety.
+Time constraints ensure a slot is available and has enough minutes for the task.
+Owner preferences include max_daily_time as a hard limit, preferred time windows like morning or afternoon, and break durations between tasks.
+Priority constraints check that a task’s priority falls in the valid 1–5 range.
+Health constraints come first because safety matters most. Time constraints follow to ensure scheduling is possible. Priority and owner preferences then guide the order and placement of tasks within those limits.
+
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
@@ -161,10 +167,18 @@ A more efficient approach would look at all inflexible tasks together and figure
 - How did you use AI tools during this project (for example: design brainstorming, debugging, refactoring)?
 - What kinds of prompts or questions were most helpful?
 
+I mainly used inline completions and the chat panel with @workspace.
+Inline completions helped with repetitive logic. After writing is_due() for daily tasks, Copilot filled in similar patterns for weekly and biweekly cases, which saved time and kept things consistent.
+The chat panel was most useful during design review. Asking focused questions like reviewing the Planner class for responsibility issues helped surface problems, like Planner not owning TaskHistory or Constraint.
+
 **b. Judgment and verification**
 
 - Describe one moment where you did not accept an AI suggestion as-is.
 - How did you evaluate or verify what the AI suggested?
+
+One issue came up in complete_task(). Copilot suggested marking the task complete and logging it, but didn’t create the next occurrence. That would break recurring tasks, so I added logic to generate and append the successor.
+I also found Copilot works best for small, local logic. For anything involving multiple parts of the system, I double checked it manually.
+Using separate chat sessions for design, implementation, and testing helped keep suggestions focused and avoided mixing concerns.
 
 ---
 
@@ -175,10 +189,17 @@ A more efficient approach would look at all inflexible tasks together and figure
 - What behaviors did you test?
 - Why were these tests important?
 
+We ran 24 tests covering three main areas: sorting, recurrence, and conflict detection.
+Sorting tests checked that tasks from allocate_tasks_to_slots() are in chronological order, that sequential tasks do not overlap, and that inflexible tasks are placed before flexible ones. This ensures high-priority tasks like medication are never blocked by lower-priority flexible tasks.
+Recurrence tests verified that complete_task() generates successors correctly for daily and weekly tasks, preserves last_completed so is_due() works, and does not produce successors for monthly tasks.
+Conflict detection tests confirmed that detect_conflicts() flags overlapping tasks, exact duplicates, and fully contained slots while ignoring non-overlapping tasks. We also checked that conflict messages include task names for clear UI warnings.
+
 **b. Confidence**
 
 - How confident are you that your scheduler works correctly?
 - What edge cases would you test next if you had more time?
+
+Confidence is high for these behaviors. Some gaps remain, such as twice-daily tasks, health-based constraints, max daily time enforcement, and TaskHistory streak calculations.
 
 ---
 
@@ -188,10 +209,16 @@ A more efficient approach would look at all inflexible tasks together and figure
 
 - What part of this project are you most satisfied with?
 
+The part I am most satisfied with is how the layers of the project connect from start to finish. I went from a UML diagram on paper to working Python classes, then integrated those classes into a Streamlit UI, and finally wrote tests to verify behavior at each layer. It felt like a real software project, not just a coding exercise.
+
 **b. What you would improve**
 
 - If you had another iteration, what would you improve or redesign?
 
+The twice_daily logic in is_due() checks if the current hour is past noon, which can break if the owner's schedule does not follow a morning/evening split. I would redesign it to track how many times a task is completed per day instead of relying on the hour. I would also add persistence, since currently all state is in Streamlit session state and resets on page reload, causing users to lose their task history.
+
 **c. Key takeaway**
 
 - What is one important thing you learned about designing systems or working with AI on this project?
+
+The main lesson I learned is that AI handles single-method suggestions well but often misses how methods interact. Each line Copilot suggested made sense on its own, but it did not handle registering a successor or updating history in the same call. The most valuable use of AI was design review. Asking questions like "does this class have too many responsibilities?" or "what could go wrong with this flow?" gave more useful insights than asking it to write code.
