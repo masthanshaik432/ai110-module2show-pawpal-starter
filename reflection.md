@@ -7,6 +7,103 @@
 - Briefly describe your initial UML design.
 - What classes did you include, and what responsibilities did you assign to each?
 
+Three core actions that a user should be able to perform
+1) add a pet, including info such as diet and meds
+2) view a daily schedule around the pet
+3) obtain a reasoning for the given schedule
+
+Here are objects that I have brainstormed along with their attributes and functions:
+Class Pet:
+attributes
+- name: string
+- species: string
+- age: int
+- health_conditions: list[string]
+- height: float
+- weight: float
+methods
+- get_daily_needs()
+- special_care_needed()
+
+Class Task:
+attributes
+- name: string
+- task_type: string
+- duration: int
+- priority: int (1–5)
+- frequency: string
+- pet: Pet
+- is_flexible: bool
+- last_completed: datetime
+methods
+- is_due(date)
+- get_priority_score()
+- fits_time_slot(slot)
+
+Class TimeSlot:
+attributes
+- start_time: datetime
+- end_time: datetime
+- available: bool
+methods
+- duration()
+- can_fit(task)
+- split(task_duration)
+
+Class OwnerPreferences
+attributes
+- max_daily_time: int
+- preferred_times: dict
+- task_priorities_override: dict
+- break_duration: int
+methods
+- adjust_task_priority(task)
+- is_preferred_time(task, slot)
+- get_available_time_slots()
+
+Class DailyPlan
+attributes
+- date: datetime
+- scheduled_tasks: list[(Task, TimeSlot)]
+- unscheduled_tasks: list[Task]
+- total_time: int
+methods
+- add_task(task, slot)
+- calculate_total_time()
+- get_summary()
+- explain_plan()
+
+Class Planner
+attributes
+- tasks: list[Task]
+- pets: list[Pet]
+- preferences: OwnerPreferences
+- time_slots: list[TimeSlot]
+methods
+- filter_due_tasks(date)
+- prioritize_tasks(tasks)
+- allocate_tasks_to_slots(tasks)
+- generate_daily_plan(date)
+- explain_decisions(plan)
+
+Class TaskHistory
+attributes
+- completed_tasks: list[(Task, datetime)]
+methods
+- log_completion(task)
+- get_last_completed(task)
+- get_completion_rate(task)
+
+Class Constraint
+attributes
+- rules: list
+methods
+- check_time_constraint(task, slot)
+- check_priority_constraint(task)
+- check_pet_health_constraints(task)
+- validate_schedule(plan)
+
+
 **b. Design changes**
 
 - Did your design change during implementation?
