@@ -147,6 +147,11 @@ Before, it could easily get out of sync depending on how tasks were added. Now i
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+One tradeoff the scheduler makes is guaranteed placement for high priority tasks vs optimal use of time.
+Right now, inflexible tasks are scheduled first, in priority order, and each one takes the first time slot that fits. That keeps things simple, but it can waste space. For example, a 60-minute vet appointment might take up a whole morning slot, even if that blocks a quick 10-minute medication that could’ve fit somewhere around it.
+So the system is basically favoring predictability making sure important, inflexible tasks get placed over squeezing in as many tasks as possible.
+A more efficient approach would look at all inflexible tasks together and figure out the best way to fit them before locking anything in. But that’s a much harder problem to solve, so this version sticks with the simpler tradeoff.
+
 ---
 
 ## 3. AI Collaboration

@@ -155,6 +155,38 @@ class Task:
 
         return score
 
+    def next_occurrence(self) -> Optional["Task"]:
+        """Return a fresh Task instance representing the next scheduled occurrence of this task.
+
+        Only recurring frequencies ("daily", "twice_daily", "weekly") produce a
+        successor. Non-recurring tasks ("biweekly", "monthly") return None because
+        those are typically owner-managed rather than auto-generated.
+
+        The new instance carries forward ``last_completed`` from the current task
+        so that ``is_due()`` can correctly compute when the successor falls due,
+        while ``completed`` is reset to False so it appears as a pending task in
+        filters and the scheduler.
+
+        Returns:
+            A new Task with identical attributes and ``completed=False``, or
+            None if this task's frequency is not in the recurring set.
+        """
+        recurring = {"daily", "twice_daily", "weekly"}
+        if self.frequency not in recurring:
+            return None
+
+        return Task(
+            name=self.name,
+            task_type=self.task_type,
+            duration=self.duration,
+            priority=self.priority,
+            frequency=self.frequency,
+            pet=self.pet,
+            is_flexible=self.is_flexible,
+            last_completed=self.last_completed,  # carries forward so is_due() knows when it last ran
+            completed=False,
+        )
+
     def fits_time_slot(self, slot: TimeSlot) -> bool:
         """Return True if this task can fit within the given TimeSlot."""
         return slot.available and slot.duration() >= self.duration
@@ -239,13 +271,16 @@ class TaskHistory:
         if not completed_dates:
             return 0
 
+        # Start from the most recent completion, not today —
+        # prevents a streak from resetting just because today isn't done yet.
+        check = max(completed_dates[0], datetime.now().date())
+
         streak = 0
-        check = datetime.now().date()
         for d in completed_dates:
             if d == check:
                 streak += 1
                 check -= timedelta(days=1)
-            elif d < check:
+            else:
                 break
         return streak
 
@@ -295,6 +330,43 @@ class DailyPlan:
                 for t in self.unscheduled_tasks
             ],
         }
+
+    def detect_conflicts(self) -> list[str]:
+        """Check every pair of scheduled tasks for overlapping time slots.
+
+        Uses the standard interval-overlap test:
+            A.start < B.end  AND  B.start < A.end
+
+        Runs in O(n²) over the number of scheduled tasks — acceptable for
+        typical daily plans (< 20 tasks) and avoids crashing the program by
+        returning warnings instead of raising exceptions.
+
+        This catches conflicts introduced by external slot injection (e.g. the
+        Streamlit UI or manual DailyPlan construction). The normal allocator
+        prevents overlaps by design, so this acts as a safety net.
+
+        Returns:
+            A list of human-readable warning strings, one per conflicting pair.
+            An empty list means the schedule is conflict-free.
+        """
+        warnings_out: list[str] = []
+
+        for i, (task_a, slot_a) in enumerate(self.scheduled_tasks):
+            for task_b, slot_b in self.scheduled_tasks[i + 1:]:
+                overlaps = (
+                    slot_a.start_time < slot_b.end_time
+                    and slot_b.start_time < slot_a.end_time
+                )
+                if overlaps:
+                    warnings_out.append(
+                        f"CONFLICT: '{task_a.name}' ({task_a.pet.name}) "
+                        f"{slot_a.start_time.strftime('%H:%M')}–{slot_a.end_time.strftime('%H:%M')}"
+                        f"  overlaps  "
+                        f"'{task_b.name}' ({task_b.pet.name}) "
+                        f"{slot_b.start_time.strftime('%H:%M')}–{slot_b.end_time.strftime('%H:%M')}"
+                    )
+
+        return warnings_out
 
     def explain_plan(self) -> str:
         """Return a human-readable explanation of the day's schedule."""
@@ -450,6 +522,69 @@ class Planner:
                 due.append(task)
         return due
 
+    def filter_tasks(
+        self,
+        completed: Optional[bool] = None,
+        pet_name: Optional[str] = None,
+    ) -> list[Task]:
+        """Return a filtered view of all tasks registered with this planner.
+
+        Filters are optional and combinable — both can be applied at once,
+        either alone, or omitted entirely to return the full task list.
+        The original ``self.tasks`` list is never mutated.
+
+        Args:
+            completed: Pass ``True`` to return only tasks where ``task.completed
+                       is True``; ``False`` for only incomplete tasks; ``None``
+                       (default) to skip completion filtering entirely.
+            pet_name:  Case-insensitive pet name to match against
+                       ``task.pet.name``. Pass ``None`` (default) to include
+                       tasks for all pets.
+
+        Returns:
+            A new list of Task objects that satisfy all supplied filters.
+        """
+        results = self.tasks
+
+        if completed is not None:
+            results = [t for t in results if t.completed == completed]
+
+        if pet_name is not None:
+            name_lower = pet_name.lower()
+            results = [t for t in results if t.pet.name.lower() == name_lower]
+
+        return results
+
+    def complete_task(self, task: Task) -> Optional[Task]:
+        """Mark a task as done, persist it to history, and auto-register its successor.
+
+        This is the preferred way to complete a task instead of calling
+        ``task.mark_complete()`` directly, because it keeps three things
+        in sync atomically:
+
+        1. Sets ``task.completed = True`` and stamps ``task.last_completed``.
+        2. Appends the completion record to ``TaskHistory`` so
+           ``get_completion_rate()`` and ``streak()`` stay accurate.
+        3. Calls ``task.next_occurrence()`` and, if a successor is returned,
+           appends it to ``self.tasks`` so it appears in future scheduling
+           and filter calls without any manual intervention.
+
+        Args:
+            task: A Task object that is currently registered in ``self.tasks``.
+
+        Returns:
+            The newly created successor Task if the frequency is recurring
+            ("daily", "twice_daily", or "weekly"), otherwise None.
+        """
+        task.mark_complete()
+        self.history.log_completion(task)
+
+        next_task = task.next_occurrence()
+        if next_task is not None:
+            self.tasks.append(next_task)
+
+        return next_task
+
     def prioritize_tasks(self, tasks: list[Task]) -> list[Task]:
         """Sort tasks by priority score descending, applying owner preference overrides."""
         def sort_key(task: Task) -> float:
@@ -509,6 +644,9 @@ class Planner:
                 "Review plan.unscheduled_tasks for tasks that could not be placed.",
                 stacklevel=2,
             )
+
+        for conflict in plan.detect_conflicts():
+            warnings.warn(conflict, stacklevel=2)
 
         return plan
 
