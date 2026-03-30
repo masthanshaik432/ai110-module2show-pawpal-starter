@@ -11,6 +11,15 @@ classDiagram
         GROOMING
     }
 
+    class FREQUENCY_INTERVALS {
+        <<constant>>
+        daily: 1
+        twice_daily: 1
+        weekly: 7
+        biweekly: 14
+        monthly: 30
+    }
+
     class Pet {
         +String name
         +String species
@@ -31,8 +40,11 @@ classDiagram
         +Pet pet
         +bool is_flexible
         +datetime last_completed
+        +bool completed
+        +mark_complete() void
         +is_due(date) bool
         +get_priority_score() float
+        +next_occurrence() Task
         +fits_time_slot(slot) bool
     }
 
@@ -52,16 +64,18 @@ classDiagram
         +int break_duration
         +adjust_task_priority(task) int
         +is_preferred_time(task, slot) bool
-        +get_available_time_slots() List~TimeSlot~
+        +get_available_time_slots(for_date) List~TimeSlot~
     }
 
     class DailyPlan {
         +datetime date
         +List~TaskSlotPair~ scheduled_tasks
         +List~Task~ unscheduled_tasks
-        +total_time() int
+        +total_time int
         +add_task(task, slot) void
+        +calculate_total_time() int
         +get_summary() dict
+        +detect_conflicts() List~String~
         +explain_plan() String
     }
 
@@ -72,8 +86,10 @@ classDiagram
         +TaskHistory history
         +Constraint constraint
         +filter_due_tasks(date) List~Task~
+        +filter_tasks(completed, pet_name) List~Task~
         +prioritize_tasks(tasks) List~Task~
-        +allocate_tasks_to_slots(tasks) DailyPlan
+        +complete_task(task) Task
+        +allocate_tasks_to_slots(tasks, date) DailyPlan
         +generate_daily_plan(date) DailyPlan
         +explain_decisions(plan) String
     }
@@ -82,7 +98,7 @@ classDiagram
         +List~TaskDatePair~ completed_tasks
         +log_completion(task) void
         +get_last_completed(task) datetime
-        +get_completion_rate(task) float
+        +get_completion_rate(task, since) float
         +streak(task) int
     }
 
@@ -102,17 +118,17 @@ classDiagram
     }
 
     Task --> TaskType : typed as
+    Task --> FREQUENCY_INTERVALS : interval lookup
 
     Planner "1" --> "1..*" Pet : manages
     Planner "1" --> "1..*" Task : schedules
     Planner "1" --> "1" OwnerPreferences : uses
-    Planner "1" --> "1" TaskHistory : reads
+    Planner "1" --> "1" TaskHistory : logs completions to
     Planner "1" --> "1" Constraint : validates with
     Planner --> DailyPlan : generates
 
     Task "1..*" --> "1" Pet : belongs to
-    Task --> TaskHistory : logged in
-    Task "1" --> "0..*" Notification : triggers
+    Notification "0..*" --> "1" Task : about
 
     DailyPlan "1" --> "0..*" Task : contains
     DailyPlan "1" --> "0..*" TimeSlot : uses

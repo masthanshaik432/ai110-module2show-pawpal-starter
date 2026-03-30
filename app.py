@@ -2,7 +2,6 @@ import streamlit as st
 
 from pawpal_system import (
     Constraint,
-    DailyPlan,
     OwnerPreferences,
     Pet,
     Planner,
@@ -103,17 +102,28 @@ if submitted_pet:
         st.success(f"Added **{new_pet.name}** ({species}).")
 
 if st.session_state["pets"]:
-    st.write("**Current pets:**")
-    st.table([
-        {
-            "Name": p.name,
-            "Species": p.species,
-            "Age": p.age,
-            "Health conditions": ", ".join(p.health_conditions) or "none",
-            "Special care": "yes" if p.special_care_needed() else "no",
-        }
-        for p in st.session_state["pets"]
-    ])
+    pets = st.session_state["pets"]
+
+    # Metric card — quick count at a glance
+    special_care_count = sum(1 for p in pets if p.special_care_needed())
+    col_m1, col_m2 = st.columns(2)
+    col_m1.metric("Total pets", len(pets))
+    col_m2.metric("Require special care", special_care_count)
+
+    st.dataframe(
+        [
+            {
+                "Name": p.name,
+                "Species": p.species,
+                "Age": p.age,
+                "Health conditions": ", ".join(p.health_conditions) or "—",
+                "Special care": "⚠️ yes" if p.special_care_needed() else "✅ no",
+            }
+            for p in pets
+        ],
+        use_container_width=True,
+        hide_index=True,
+    )
 
 st.divider()
 
@@ -155,19 +165,64 @@ else:
         st.success(f"Added task **{task_name}** for {selected_pet_name}.")
 
     if st.session_state["tasks"]:
-        st.write("**Current tasks:**")
-        st.table([
-            {
-                "Task": t.name,
-                "Pet": t.pet.name,
-                "Type": t.task_type.value,
-                "Duration (min)": t.duration,
-                "Priority": t.priority,
-                "Frequency": t.frequency,
-                "Flexible": "yes" if t.is_flexible else "no",
-            }
-            for t in st.session_state["tasks"]
-        ])
+        planner: Planner = st.session_state["planner"]
+        all_tasks = st.session_state["tasks"]
+
+        # Metric cards
+        pending = [t for t in all_tasks if not t.completed]
+        done    = [t for t in all_tasks if t.completed]
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Total tasks", len(all_tasks))
+        col_m2.metric("Pending", len(pending))
+        col_m3.metric("Completed", len(done))
+
+        # Filter controls — backed by planner.filter_tasks()
+        st.caption("Filter tasks")
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            filter_pet = st.selectbox(
+                "By pet",
+                ["All pets"] + [p.name for p in st.session_state["pets"]],
+                key="filter_pet",
+            )
+        with col_f2:
+            filter_status = st.selectbox(
+                "By status",
+                ["All", "Pending", "Completed"],
+                key="filter_status",
+            )
+
+        pet_arg    = None if filter_pet == "All pets" else filter_pet
+        status_arg = None if filter_status == "All" else (filter_status == "Completed")
+        filtered   = planner.filter_tasks(completed=status_arg, pet_name=pet_arg)
+
+        # Sort filtered results by priority score — highest first
+        sorted_tasks = planner.prioritize_tasks(filtered)
+
+        if sorted_tasks:
+            st.caption(
+                f"Showing {len(sorted_tasks)} task(s) · sorted by priority score (highest first)"
+            )
+            st.dataframe(
+                [
+                    {
+                        "Task": t.name,
+                        "Pet": t.pet.name,
+                        "Type": t.task_type.value,
+                        "Duration (min)": t.duration,
+                        "Priority": t.priority,
+                        "Priority score": round(t.get_priority_score(), 2),
+                        "Frequency": t.frequency,
+                        "Flexible": "yes" if t.is_flexible else "no",
+                        "Status": "✅ done" if t.completed else "🔲 pending",
+                    }
+                    for t in sorted_tasks
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.warning("No tasks match the selected filters.")
     else:
         st.info("No tasks yet.")
 
@@ -187,18 +242,45 @@ else:
         plan = planner.generate_daily_plan(datetime.now())
         summary = plan.get_summary()
 
-        st.success(
-            f"Scheduled **{summary['scheduled_count']}** task(s) · "
-            f"**{summary['total_time_minutes']} min** total"
-        )
+        # Summary metrics
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Scheduled", summary["scheduled_count"])
+        col_m2.metric("Could not schedule", summary["unscheduled_count"])
+        col_m3.metric("Total time (min)", summary["total_time_minutes"])
 
+        # Conflict warnings — detect_conflicts() checks every pair of scheduled slots
+        conflicts = plan.detect_conflicts()
+        if conflicts:
+            st.error(f"⚠️ {len(conflicts)} scheduling conflict(s) detected — review your time windows.")
+            for conflict in conflicts:
+                st.error(conflict)
+        else:
+            st.success("No scheduling conflicts detected.")
+
+        # Chronological schedule — explain_plan() sorts tasks by start time
         if summary["scheduled_tasks"]:
-            st.write("**Schedule:**")
-            st.table(summary["scheduled_tasks"])
+            st.write("**Chronological schedule:**")
+            st.dataframe(
+                summary["scheduled_tasks"],
+                use_container_width=True,
+                hide_index=True,
+            )
 
+        # Unscheduled tasks
         if summary["unscheduled_tasks"]:
-            st.warning("The following tasks could not be scheduled:")
-            st.table(summary["unscheduled_tasks"])
+            st.warning(
+                f"{summary['unscheduled_count']} task(s) could not be scheduled — "
+                "no suitable time slot was available."
+            )
+            st.dataframe(
+                summary["unscheduled_tasks"],
+                use_container_width=True,
+                hide_index=True,
+            )
 
-        st.write("**Planner decisions:**")
-        st.text(planner.explain_decisions(plan))
+        # Verbose outputs collapsed by default so they don't crowd the page
+        with st.expander("View full chronological plan"):
+            st.text(plan.explain_plan())
+
+        with st.expander("View scheduling decisions"):
+            st.text(planner.explain_decisions(plan))
