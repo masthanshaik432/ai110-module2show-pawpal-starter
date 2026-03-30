@@ -106,13 +106,15 @@ class Task:
     pet: Pet = field(repr=False)
     is_flexible: bool = True
     last_completed: Optional[datetime] = None
+    completed: bool = False
+
+    def mark_complete(self) -> None:
+        """Mark this task as completed and record the current timestamp."""
+        self.completed = True
+        self.last_completed = datetime.now()
 
     def is_due(self, date: datetime) -> bool:
-        """Return True if this task is due on the given date.
-
-        For twice_daily tasks, the task is due again if the last completion
-        was before noon and the current hour is noon or later.
-        """
+        """Return True if this task is due on the given date based on its frequency and last completion."""
         target = date.date() if isinstance(date, datetime) else date
 
         if self.last_completed is None:
@@ -133,14 +135,7 @@ class Task:
         return (target - last).days >= interval
 
     def get_priority_score(self) -> float:
-        """Return a numeric score used for sorting.
-
-        Base priority is boosted by:
-        - +1.0 for inflexible tasks (must be placed first)
-        - +0.5 if the pet has health conditions
-        - +1.0 for MEDICATION or FEEDING task types
-        - up to +2.0 for overdue tasks (0.5 per overdue day, capped)
-        """
+        """Return a weighted numeric score used to sort tasks, boosted by health conditions, task type, and overdue days."""
         score = float(self.priority)
 
         if not self.is_flexible:
@@ -180,11 +175,7 @@ class TimeSlot:
         return self.available and self.duration() >= task.duration
 
     def split(self, task_duration: int) -> list[TimeSlot]:
-        """Split this slot around a task block; return remaining free time as new slot(s).
-
-        Carves task_duration minutes from the start of the slot. Returns an empty
-        list if no time remains after the task.
-        """
+        """Carve task_duration minutes from the start of this slot and return any remaining time as a new TimeSlot."""
         task_end = self.start_time + timedelta(minutes=task_duration)
         if task_end >= self.end_time:
             return []
@@ -223,13 +214,7 @@ class TaskHistory:
         return max(times) if times else None
 
     def get_completion_rate(self, task: Task, since: Optional[datetime] = None) -> float:
-        """Return the ratio of completed vs expected occurrences (0.0–1.0).
-
-        Args:
-            task:  The task to evaluate.
-            since: If provided, only consider completions on or after this date.
-                   Defaults to the earliest recorded completion.
-        """
+        """Return completed vs expected occurrences as a 0.0–1.0 ratio, optionally filtered by a start date."""
         all_times = self._records_for(task)
         if not all_times:
             return 0.0
@@ -349,11 +334,7 @@ class OwnerPreferences:
         self.break_duration = break_duration            # minutes between tasks
 
     def adjust_task_priority(self, task: Task) -> int:
-        """Return an adjusted priority for the task based on owner overrides.
-
-        Override keys can be task names (e.g. "Walk Rex") or TaskType values
-        (e.g. "walk"). Task-name keys take precedence over type-level keys.
-        """
+        """Return the owner-overridden priority for the task, falling back to the task's own priority."""
         override = (
             self.task_priorities_override.get(task.name)
             or self.task_priorities_override.get(task.task_type.value)
@@ -361,11 +342,7 @@ class OwnerPreferences:
         return int(override) if override is not None else task.priority
 
     def is_preferred_time(self, task: Task, slot: TimeSlot) -> bool:
-        """Return True if the slot falls within the owner's preferred window for this task.
-
-        Checks task-type-specific windows first (e.g. "medication": (8, 9)),
-        then falls back to named time-of-day windows (e.g. "morning": (7, 12)).
-        """
+        """Return True if the slot falls within the owner's preferred time window for this task type."""
         slot_hour = slot.start_time.hour
 
         type_window = self.preferred_times.get(task.task_type.value)
@@ -381,11 +358,7 @@ class OwnerPreferences:
         return False
 
     def get_available_time_slots(self, for_date: Optional[datetime] = None) -> list[TimeSlot]:
-        """Return time slots that respect max_daily_time and break rules.
-
-        Generates one contiguous TimeSlot per preferred_times window on for_date
-        (defaults to today). Total slot time is capped at max_daily_time.
-        """
+        """Return one TimeSlot per preferred window for the given date, capped to max_daily_time."""
         base = (for_date or datetime.now()).date()
         slots: list[TimeSlot] = []
         remaining_budget = self.max_daily_time
@@ -434,13 +407,9 @@ class Constraint:
         return True
 
     def validate_schedule(self, plan: DailyPlan) -> bool:
-        """Run all constraint checks across every task in the plan.
-
-        Returns True only if every scheduled task passes time, priority,
-        and pet health checks.
-        """
+        """Return True if every scheduled task passes duration, priority, and pet health checks."""
         for task, slot in plan.scheduled_tasks:
-            if not self.check_time_constraint(task, slot):
+            if slot.duration() < task.duration:     # duration fit check (no availability flag)
                 return False
             if not self.check_priority_constraint(task):
                 return False
@@ -469,12 +438,7 @@ class Planner:
         self.constraint = constraint
 
     def filter_due_tasks(self, date: datetime) -> list[Task]:
-        """Return only the tasks that are due on the given date.
-
-        Syncs each task's last_completed from history before calling is_due()
-        so the freshest completion data is always used. Tasks blocked by a pet
-        health constraint are excluded even if they are due.
-        """
+        """Return tasks due on the given date, synced from history and filtered by health constraints."""
         due: list[Task] = []
         for task in self.tasks:
             # Keep the task object in sync with the history record
@@ -499,15 +463,7 @@ class Planner:
         return sorted(tasks, key=sort_key, reverse=True)
 
     def allocate_tasks_to_slots(self, tasks: list[Task], date: Optional[datetime] = None) -> DailyPlan:
-        """Assign tasks to available time slots in two passes.
-
-        Pass 1 — inflexible tasks (is_flexible=False, e.g. medications, appointments).
-        Pass 2 — flexible tasks (is_flexible=True, e.g. walks, grooming).
-
-        Each assignment is gate-checked via self.constraint before committing.
-        Unplaceable tasks land in DailyPlan.unscheduled_tasks. Slots come from
-        self.preferences.get_available_time_slots(date).
-        """
+        """Place inflexible tasks first then flexible tasks into available slots, returning a DailyPlan."""
         plan = DailyPlan(date=date or datetime.now())
         slots = self.preferences.get_available_time_slots(for_date=date)
 
@@ -557,11 +513,7 @@ class Planner:
         return plan
 
     def explain_decisions(self, plan: DailyPlan) -> str:
-        """Return a natural-language explanation of every scheduling decision.
-
-        This is the LLM hook point — replace the body with a Claude API call
-        (using plan.get_summary() as context) for a richer explanation.
-        """
+        """Return a natural-language summary of why each task was scheduled or skipped (LLM hook point)."""
         lines = [f"Scheduling decisions for {plan.date.strftime('%Y-%m-%d')}:\n"]
 
         for task, slot in sorted(plan.scheduled_tasks, key=lambda x: x[1].start_time):
